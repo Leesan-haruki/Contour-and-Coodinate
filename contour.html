@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initital-scale=1.0">
+        <title>opencv</title>
+    </head>
+    <body>
+        <h1>OpenCVによる輪郭検出</h1>
+        <div id="topBar">
+            <input type="file" accept="image/*" id="fileUp">
+            <button id="execute">輪郭を検出する</button>
+        </div>
+        <div>
+            <canvas id="canvasInput" width="1653" height="2336"></canvas>
+            <canvas id="canvasOutput" width="1653" height="2336"></canvas>
+        </div>
+        
+        <script src="https://docs.opencv.org/4.5.0/opencv.js"></script>
+        <script type="text/javascript">
+
+            function load(file) {
+                const canvas = document.getElementById('canvasInput');
+                const ctx = canvas.getContext("2d");
+                const image = new Image();
+                const reader = new FileReader();
+                reader.onload = e => {
+                    image.onload = () => {
+                        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+                    }
+                    image.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+
+            let input = document.querySelector('input[type="file"]');
+            input.addEventListener('change', e => load(e.target.files[0]), false);
+
+            function contour(inputCanvasId, outputCanvasId) {
+                let src = cv.imread(inputCanvasId);
+                let dst = cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC3);
+
+                cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY, 0);
+                let ksize = new cv.Size(3, 3);
+                cv.GaussianBlur(src, src, ksize, 0, 0, cv.BORDER_DEFAULT);
+                cv.threshold(src, src, 200, 255, cv.THRESH_BINARY);
+                // 多少のかすれに頑健に
+                let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+                cv.morphologyEx(src, src, cv.MORPH_OPEN, kernel);
+                cv.imshow(inputCanvasId, src);
+                
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(src, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+                console.log(contours.size());
+
+                let maxHeight = 0;
+                let secondMaxHeight = 0;
+                let maxId = 0;
+                let secondMaxId = 0;
+                for (let i = 0; i < contours.size(); i++) {
+                    const ci = contours.get(i);
+                    let minY = Infinity;
+                    let maxY = 0;
+                    for (let j = 0; j < ci.data32S.length; j+=2) {
+                        if (ci.data32S[j+1] < minY) {
+                            minY = ci.data32S[j+1]
+                        }
+                        if (ci.data32S[j+1] > maxY) {
+                            maxY = ci.data32S[j+1]
+                        }
+                    }
+                    if (maxHeight < maxY - minY){
+                        secondMaxHeight = maxHeight;
+                        maxHeight = maxY - minY;
+                        secondMaxId = maxId;
+                        maxId = i;
+                    }
+                }
+
+                /* デバッグゾーン */
+                let color = new cv.Scalar(255, 0, 0);
+                let black = new cv.Scalar(0, 0, 0);
+                for (let i = 0; i < contours.size(); i++) {
+                    cv.drawContours(dst, contours, i, color, 1, cv.LINE_8, hierarchy, 100);
+                }
+                // cv.drawContours(dst, contours, secondMaxId, color, 1, cv.LINE_8, hierarchy, 100);
+                console.log("maxId:"+contours.get(maxId));
+                const ctx = document.getElementById('canvasOutput').getContext('2d');
+                ctx.font = '12px serif';
+                /*
+                for (let i = 0; i < maxLen; i+=2) {
+                    ctx.fillText(String(maxId), contours.get(maxId).data32S[i], contours.get(maxId).data32S[i+1]);
+                }
+                */
+                /*
+                for (let i = 0; i < contours.size(); i++) {
+                    const ci = contours.get(i);
+                    if (ci.data32S.length >= 200) {
+                        if (i === maxId) ctx.fillStyle = 'red';
+                        for (let j = 0; j < ci.data32S.length; j+=2) {
+                            ctx.fillText(String(i), ci.data32S[j], ci.data32S[j+1]);
+                        }
+                    }
+                }
+                */
+
+                // 左上はx+yが最小。右下はx+yが最大。左下はy-xが最大。
+                let corner = {
+                    "topLeftVal": Infinity, "topRightVal": Infinity, "bottomLeftVal": 0, "bottomRightVal": 0,
+                    "topLeft": [null, null], "topRight": [null, null], "bottomLeft": [null, null], "bottomRight": [null, null]
+                };
+
+                const len = contours.get(secondMaxId).data32S.length;
+                for (let i = 0; i < len; i+=2) {
+                    x = contours.get(secondMaxId).data32S[i];
+                    y = contours.get(secondMaxId).data32S[i+1];
+                    if (corner["topLeftVal"] > x + y) {
+                        corner["topLeftVal"] = x + y;
+                        corner["topLeft"] = [x, y];
+                    }
+                    if (corner["topRightVal"] > y - x) {
+                        corner["topRightVal"] = y - x;
+                        corner["topRight"] = [x, y];
+                    }
+                    if (corner["bottomRightVal"] < x + y) {
+                        corner["bottomRightVal"] = x + y;
+                        corner["bottomRight"] = [x, y];
+                    }
+                    if (corner["bottomLeftVal"] < y - x) {
+                        corner["bottomLeftVal"] = y - x;
+                        corner["bottomLeft"] = [x, y];
+                    }
+                }
+
+                cv.circle(dst, new cv.Point(corner["topLeft"][0], corner["topLeft"][1]), 10, color, cv.FILLED)
+                cv.circle(dst, new cv.Point(corner["topRight"][0], corner["topRight"][1]), 10, color, cv.FILLED)
+                cv.circle(dst, new cv.Point(corner["bottomLeft"][0], corner["bottomLeft"][1]), 10, color, cv.FILLED)
+                cv.circle(dst, new cv.Point(corner["bottomRight"][0], corner["bottomRight"][1]), 10, color, cv.FILLED)
+
+                const cornerInfo = document.createElement("div");
+                cornerInfo.innerHTML = (`
+                    左上：[${corner["topLeft"][0]}, ${corner["topLeft"][1]}]
+                    右上：[${corner["topRight"][0]}, ${corner["topRight"][1]}]
+                    左下：[${corner["bottomLeft"][0]}, ${corner["bottomLeft"][1]}]
+                    右下：[${corner["bottomRight"][0]}, ${corner["bottomRight"][1]}]
+                `);
+                document.getElementById("topBar").appendChild(cornerInfo);
+                cv.rectangle(src, 
+                    new cv.Point(corner["topLeft"][0] + 30, corner["topLeft"][1] + 30), 
+                    new cv.Point(corner["topLeft"][0] + 230, corner["topLeft"][1] + 230),
+                    black)
+                cv.rectangle(src, 
+                    new cv.Point(corner["topRight"][0] - 30, corner["topRight"][1] + 30), 
+                    new cv.Point(corner["topRight"][0] - 230, corner["topRight"][1] + 230),
+                    black)
+                cv.rectangle(src, 
+                    new cv.Point(corner["bottomLeft"][0] + 30, corner["bottomLeft"][1] - 30), 
+                    new cv.Point(corner["bottomLeft"][0] + 230, corner["bottomLeft"][1] - 230),
+                    black)
+                cv.rectangle(src, 
+                    new cv.Point(corner["bottomRight"][0] - 30, corner["bottomRight"][1] - 30), 
+                    new cv.Point(corner["bottomRight"][0] - 230, corner["bottomRight"][1] - 230),
+                    black)
+
+                cv.imshow(inputCanvasId, src);
+                cv.imshow(outputCanvasId, dst);
+                
+                let tl = new cv.Mat(); let tr = new cv.Mat(); let bl = new cv.Mat(); let br = new cv.Mat();
+                let rect1 = new cv.Rect(corner["topLeft"][0] + 30, corner["topLeft"][1] + 30, 200, 200);
+                let rect2 = new cv.Rect(corner["topRight"][0] - 230, corner["topRight"][1] + 30, 200, 200);
+                let rect3 = new cv.Rect(corner["bottomLeft"][0] + 30, corner["bottomLeft"][1] - 230, 200, 200);
+                let rect4 = new cv.Rect(corner["bottomRight"][0] - 230, corner["bottomRight"][1] - 230, 200, 200);
+                
+                tl = src.roi(rect1);
+                console.log(cv.mean(tl)[0]);
+                tr = src.roi(rect2);
+                console.log(cv.mean(tr)[0]);
+                bl = src.roi(rect3);
+                console.log(cv.mean(bl)[0]);
+                br = src.roi(rect4);
+                console.log(cv.mean(br)[0]);
+                
+                // 内積計算
+                tlx = corner["topLeft"][0]; tly = corner["topLeft"][1];
+                trx = corner["topRight"][0]; tryy = corner["topRight"][1];
+                blx = corner["bottomLeft"][0]; bly = corner["bottomLeft"][1];
+                brx = corner["bottomRight"][0]; bry = corner["bottomRight"][1];
+
+                console.log(`左上:${(trx-tlx) * (blx-tlx) + (tryy-tly) * (bly-tly)}`);
+                console.log(`右上:${(brx-trx) * (tlx-trx) + (tly-tryy) * (bry-tryy)}`);
+                console.log(`左下:${(brx-blx) * (tlx-blx) + (tly-bly) * (bry-bly)}`);
+                console.log(`右下:${(blx-brx) * (trx-brx) + (tryy-bry) * (bly-bry)}`);
+
+                src.delete();
+                dst.delete();
+                contours.delete();
+                hierarchy.delete();
+            }
+
+            let exe = document.getElementById('execute');
+            exe.addEventListener('click', e => contour('canvasInput', 'canvasOutput'));
+
+        </script>
+    </body>
+</html>
